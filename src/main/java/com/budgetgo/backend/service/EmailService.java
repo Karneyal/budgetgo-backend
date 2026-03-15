@@ -1,6 +1,7 @@
 package com.budgetgo.backend.service;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Service;
@@ -16,11 +17,39 @@ public class EmailService {
     @Autowired
     private JavaMailSender mailSender;
 
-    public void sendInvitationEmail(String toEmail, String tripName, String invitationLink, String invitedBy) {
-        try {
-            String subject = "You've been invited to join a trip: " + tripName;
-            String body = buildInvitationEmailBody(tripName, invitationLink, invitedBy);
+    // Development mode: do not actually send email (useful when SMTP auth fails).
+    // Set `app.email.mock=false` in application.properties to send real emails.
+    @Value("${app.email.mock:true}")
+    private boolean mockEmail;
 
+    public static record SentEmail(String to, String subject, String body) {
+    }
+
+    private final java.util.concurrent.atomic.AtomicReference<SentEmail> lastSentEmail =
+            new java.util.concurrent.atomic.AtomicReference<>();
+
+    public java.util.Optional<SentEmail> getLastSentEmail() {
+        return java.util.Optional.ofNullable(lastSentEmail.get());
+    }
+
+    private void recordSentEmail(String to, String subject, String body) {
+        lastSentEmail.set(new SentEmail(to, subject, body));
+    }
+
+    public void sendInvitationEmail(String toEmail, String tripName, String invitationLink, String invitedBy) {
+        String subject = "You've been invited to join a trip: " + tripName;
+        String body = buildInvitationEmailBody(tripName, invitationLink, invitedBy);
+
+        // Always record the message in memory so devs can retrieve it via /api/dev/emails/latest
+        recordSentEmail(toEmail, subject, body);
+
+        if (mockEmail) {
+            logger.info("[MOCK EMAIL] Invitation email would be sent to: " + toEmail);
+            logger.info("[MOCK EMAIL] Invitation link: " + invitationLink);
+            return;
+        }
+
+        try {
             MimeMessage message = mailSender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, true);
             helper.setTo(toEmail);
@@ -52,16 +81,23 @@ public class EmailService {
     }
 
     public void sendOtpEmail(String toEmail, String otp) {
+        String subject = "BudgetGo - Verify your email";
+        String body = buildOtpEmailBody(otp);
+
+        // ALWAYS Log OTP for Dev Mode/Fallback
+        logger.info("=== OTP GENERATED (Dev Mode) ===");
+        logger.info("To: " + toEmail);
+        logger.info("OTP: " + otp);
+        logger.info("================================");
+
+        recordSentEmail(toEmail, subject, body);
+
+        if (mockEmail) {
+            logger.info("[MOCK EMAIL] OTP email would be sent to: " + toEmail);
+            return;
+        }
+
         try {
-            String subject = "BudgetGo - Verify your email";
-            String body = buildOtpEmailBody(otp);
-
-            // ALWAYS Log OTP for Dev Mode/Fallback
-            logger.info("=== OTP GENERATED (Dev Mode) ===");
-            logger.info("To: " + toEmail);
-            logger.info("OTP: " + otp);
-            logger.info("================================");
-
             MimeMessage message = mailSender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, true);
             helper.setTo(toEmail);
@@ -108,10 +144,17 @@ public class EmailService {
     // }
 
     public void sendWelcomeEmail(String toEmail, String name) {
-        try {
-            String subject = "Welcome to BudgetGo \uD83C\uDF89";
-            String body = buildWelcomeEmailBody(name);
+        String subject = "Welcome to BudgetGo \uD83C\uDF89";
+        String body = buildWelcomeEmailBody(name);
 
+        recordSentEmail(toEmail, subject, body);
+
+        if (mockEmail) {
+            logger.info("[MOCK EMAIL] Welcome email would be sent to: " + toEmail);
+            return;
+        }
+
+        try {
             MimeMessage message = mailSender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, true);
             helper.setTo(toEmail);
@@ -140,10 +183,17 @@ public class EmailService {
     }
 
     public void sendInvitationAcceptedEmail(String toEmail, String tripName) {
-        try {
-            String subject = "You've joined the trip: " + tripName;
-            String body = buildInvitationAcceptedEmailBody(tripName);
+        String subject = "You've joined the trip: " + tripName;
+        String body = buildInvitationAcceptedEmailBody(tripName);
 
+        recordSentEmail(toEmail, subject, body);
+
+        if (mockEmail) {
+            logger.info("[MOCK EMAIL] Invitation accepted email would be sent to: " + toEmail);
+            return;
+        }
+
+        try {
             MimeMessage message = mailSender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, true);
             helper.setTo(toEmail);
@@ -171,10 +221,17 @@ public class EmailService {
     }
 
     public void sendTripCreatedEmail(String toEmail, String tripName) {
-        try {
-            String subject = "Trip Created: " + tripName + " \uD83C\uDF0D";
-            String body = buildTripCreatedEmailBody(tripName);
+        String subject = "Trip Created: " + tripName + " \uD83C\uDF0D";
+        String body = buildTripCreatedEmailBody(tripName);
 
+        recordSentEmail(toEmail, subject, body);
+
+        if (mockEmail) {
+            logger.info("[MOCK EMAIL] Trip created email would be sent to: " + toEmail);
+            return;
+        }
+
+        try {
             MimeMessage message = mailSender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, true);
             helper.setTo(toEmail);
@@ -202,10 +259,17 @@ public class EmailService {
     }
 
     public void sendBookingConfirmedEmail(String toEmail, String bookingName, String type) {
-        try {
-            String subject = "Booking Confirmed: " + bookingName + " \u2705";
-            String body = buildBookingConfirmedEmailBody(bookingName, type);
+        String subject = "Booking Confirmed: " + bookingName + " \u2705";
+        String body = buildBookingConfirmedEmailBody(bookingName, type);
 
+        recordSentEmail(toEmail, subject, body);
+
+        if (mockEmail) {
+            logger.info("[MOCK EMAIL] Booking confirmed email would be sent to: " + toEmail);
+            return;
+        }
+
+        try {
             MimeMessage message = mailSender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, true);
             helper.setTo(toEmail);
