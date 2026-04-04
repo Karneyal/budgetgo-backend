@@ -131,30 +131,41 @@ public class AuthController {
             .body(Map.of("error", "User with this email already exists"));
       }
 
-      // Verify OTP if not invitation flow (invitations are pre-verified via token
-      // ideally, but let's keep it simple)
-      // Actually, if it's an invitation, they might not need OTP if we trust the
-      // link.
-      // But the user asked for OTP. Let's enforce OTP for all NEW registrations
-      // unless we skip it for invites.
-      // For now, let's just enforce OTP if provided, or Require it.
-      // The plan said: Verify OTP.
+      boolean isInvitationFlow = false;
+      Invitation validInvitation = null;
 
-      if (request.otp() == null || request.otp().isEmpty()) {
-        return ResponseEntity.badRequest().body(Map.of("error", "OTP is required"));
+      if (request.invitationToken() != null && !request.invitationToken().isEmpty()) {
+        Optional<Invitation> invitationOpt = invitationRepository.findByToken(request.invitationToken());
+        if (invitationOpt.isPresent()) {
+          Invitation invitation = invitationOpt.get();
+          if (invitation.getEmail().equalsIgnoreCase(request.email())
+              && !invitation.isExpired()
+              && "pending".equals(invitation.getStatus())) {
+            isInvitationFlow = true;
+            validInvitation = invitation;
+          } else {
+             return ResponseEntity.badRequest().body(Map.of("error", "Invalid or expired invitation token"));
+          }
+        }
       }
 
-      Optional<com.budgetgo.backend.entity.Otp> otpOpt = otpRepository.findByEmail(request.email());
-      if (otpOpt.isEmpty() || !otpOpt.get().getOtpCode().equals(request.otp())) {
-        return ResponseEntity.badRequest().body(Map.of("error", "Invalid OTP"));
-      }
+      if (!isInvitationFlow) {
+          if (request.otp() == null || request.otp().isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "OTP is required"));
+          }
 
-      if (otpOpt.get().isExpired()) {
-        return ResponseEntity.badRequest().body(Map.of("error", "OTP has expired"));
-      }
+          Optional<com.budgetgo.backend.entity.Otp> otpOpt = otpRepository.findByEmail(request.email());
+          if (otpOpt.isEmpty() || !otpOpt.get().getOtpCode().equals(request.otp())) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Invalid OTP"));
+          }
 
-      // Clean up OTP
-      otpRepository.delete(otpOpt.get());
+          if (otpOpt.get().isExpired()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "OTP has expired"));
+          }
+
+          // Clean up OTP
+          otpRepository.delete(otpOpt.get());
+      }
 
       if (request.password().length() < 6) {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
@@ -169,33 +180,22 @@ public class AuthController {
 
       // Handle invitation if token is provided
       Long tripId = null;
-      if (request.invitationToken() != null && !request.invitationToken().isEmpty()) {
-        Optional<Invitation> invitationOpt = invitationRepository.findByToken(request.invitationToken());
-        if (invitationOpt.isPresent()) {
-          Invitation invitation = invitationOpt.get();
-
-          // Verify email matches invitation
-          if (invitation.getEmail().equalsIgnoreCase(savedUser.getEmail())
-              && !invitation.isExpired()
-              && "pending".equals(invitation.getStatus())) {
-
-            // Add user to trip members
-            if (!tripMemberRepository.existsByTripIdAndUserId(invitation.getTripId(), savedUser.getId())) {
-              TripMember tripMember = new TripMember(
-                  invitation.getTripId(),
-                  savedUser.getId(),
-                  "member",
-                  "pending");
-              tripMemberRepository.save(tripMember);
-              tripId = invitation.getTripId();
-            }
-
-            // Mark invitation as accepted
-            invitation.setStatus("accepted");
-            invitation.setAcceptedAt(LocalDateTime.now());
-            invitationRepository.save(invitation);
+      if (isInvitationFlow && validInvitation != null) {
+          // Add user to trip members
+          if (!tripMemberRepository.existsByTripIdAndUserId(validInvitation.getTripId(), savedUser.getId())) {
+            TripMember tripMember = new TripMember(
+                validInvitation.getTripId(),
+                savedUser.getId(),
+                "member",
+                "pending");
+            tripMemberRepository.save(tripMember);
+            tripId = validInvitation.getTripId();
           }
-        }
+
+          // Mark invitation as accepted
+          validInvitation.setStatus("accepted");
+          validInvitation.setAcceptedAt(LocalDateTime.now());
+          invitationRepository.save(validInvitation);
       }
 
       String token = jwtService.generateToken(savedUser.getId(), savedUser.getEmail(), savedUser.getRole());
